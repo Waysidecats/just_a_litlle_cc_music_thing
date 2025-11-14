@@ -1,3 +1,4 @@
+-- broadcaster.lua
 local dfpwm = require("cc.audio.dfpwm")
 local decoder = dfpwm.make_decoder()
 local speakers = { peripheral.find("speaker") }
@@ -6,10 +7,12 @@ local menu = require "menu"
 
 local rednetChannel = 16783
 
+-- Detect modem
 local modem = peripheral.find("modem")
 if not modem then error("No modem found!") end
 rednet.open(peripheral.getName(modem))
 
+-- Tick counter
 local currentTick = 0
 local function tickCounter()
     while true do
@@ -34,13 +37,10 @@ if drive == nil or not drive.isDiskPresent() then
         { label = "[CANCEL]", callback = function() error() end }
     }
 
-    for _,fp in ipairs(songs) do
+    for _, fp in ipairs(songs) do
         table.insert(entries, {
-            label = fp:match("^(.*)%..+$") or fp,
-            callback = function()
-                selectedSong = fp
-                menu.exit()
-            end
+            label = fp:match("^(.*)%.") or fp,
+            callback = function() selectedSong = fp; menu.exit() end
         })
     end
 
@@ -48,11 +48,11 @@ if drive == nil or not drive.isDiskPresent() then
     menu.thread()
 
     if selectedSong then
-        local file = fs.open("songs/"..selectedSong, "r")
+        local file = fs.open("songs/" .. selectedSong, "r")
         uri = file.readAll()
         file.close()
     else
-        error("No song selected")
+        error("No song selected.")
     end
 else
     local f = fs.open("disk/song.txt", "r")
@@ -69,23 +69,23 @@ end
 -------------------------------------------------------
 
 local function playChunk(chunk)
-    local returnValue = nil
+    local retval = nil
     local calls = {}
 
-    for i,s in ipairs(speakers) do
+    for i, sp in ipairs(speakers) do
         if i == 1 then
-            table.insert(calls, function() returnValue = s.playAudio(chunk, volume) end)
+            table.insert(calls, function() retval = sp.playAudio(chunk, volume) end)
         else
-            table.insert(calls, function() s.playAudio(chunk, volume) end)
+            table.insert(calls, function() sp.playAudio(chunk, volume) end)
         end
     end
 
     parallel.waitForAll(table.unpack(calls))
-    return returnValue
+    return retval
 end
 
 -------------------------------------------------------
--- Playback / Health Broadcast / Stop Handling
+-- Playback / Broadcasting / Input
 -------------------------------------------------------
 
 local quit = false
@@ -93,12 +93,10 @@ local quit = false
 local function inputThread()
     while true do
         local line = read()
-        line = string.lower(line)
-
-        if line == "stop" then
+        if string.lower(line) == "stop" then
             quit = true
             rednet.broadcast({ stop = true }, rednetChannel)
-            print("Stopping and notifying receivers...")
+            print("Stopping... receivers notified.")
             return
         end
     end
@@ -115,7 +113,6 @@ local function healthThread(startTick)
 end
 
 local function playThread(startTick)
-    -- Wait until the global tick arrives
     while currentTick < startTick do
         os.pullEvent("tick")
     end
@@ -138,13 +135,13 @@ local function playThread(startTick)
 end
 
 -------------------------------------------------------
--- Start program
+-- Start main program
 -------------------------------------------------------
 
 parallel.waitForAny(tickCounter, function()
-    -- Schedule start 4 seconds away
-    local startTick = currentTick + 80
-    print("Broadcasting start tick:", startTick)
+    local startTick = currentTick + 80 -- 4 second sync delay
+
+    print("Synced start tick:", startTick)
 
     parallel.waitForAny(
         function() playThread(startTick) end,
@@ -153,4 +150,4 @@ parallel.waitForAny(tickCounter, function()
     )
 end)
 
-print("Broadcaster terminated.")
+print("Broadcaster shut down.")
