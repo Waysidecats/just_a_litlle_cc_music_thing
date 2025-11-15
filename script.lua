@@ -92,7 +92,7 @@ function playChunk(chunk)
 	return returnValue
 end
 
-print("Playing '"  .. "' at volume " .. (volume or 1.0))
+print("Playing '" .. drive.getDiskLabel() .. "' at volume " .. (volume or 1.0))
 
 local quit = false
 
@@ -145,10 +145,10 @@ end
 
 function watchForSpeakers()
     while true do
-        -- find all speakers
-        local currentSpeakers = { peripheral.find("speaker") }
+        -- get all currently available speakers
+        local currentSpeakers = speakers
 
-        -- add any new ones that are not already in the list
+        -- add any that are not already in the speakers table
         for _, sp in ipairs(currentSpeakers) do
             local alreadyAdded = false
             for _, existing in ipairs(speakers) do
@@ -168,10 +168,11 @@ function watchForSpeakers()
     end
 end
 
+
 function waitForQuit()
 	while not quit do
 		sleep(0.1)
 	end
 end
 
-parallel.waitForAny(play, readUserInput, waitForQuit, watchForSpeakers())
+parallel.waitForAny(play, readUserInput, waitForQuit)
