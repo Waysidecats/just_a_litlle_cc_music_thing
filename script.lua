@@ -1,168 +1,112 @@
-local wpp = require("wpp")
-local dfpwm = require("cc.audio.dfpwm")
-wpp.wireless.connect("monolith-radio") 
-local speakers = { peripheral.find("speaker") }
-local speakers2 = { wpp.peripheral.find("speaker") }
-local drive = peripheral.find("drive")
-local decoder = dfpwm.make_decoder()
+-- Libraries
+local basalt = require("lib/basalt")
+local dfpwm = require("/lib/dfpwm")
+local v = require("/lib/semver")
 
+-- Settings
+local volume = settings.get("clientVolume", 1)
+local bufferLength = settings.get("bufferLength", 16)
 
-local menu = require "menu"
+-- Channels (for networking)
+local controlChannel = settings.get("controlChannel", 2561)
+local bufferChannel = settings.get("bufferChannel", controlChannel + 1)
+local clientChannel = settings.get("clientChannel", controlChannel + 2)
 
-local uri = nil
-local volume = settings.get("media_center.volume")
-local selectedSong = nil
+-- Peripherals
+local modem = peripheral.find("modem")
+local speaker = peripheral.find("speaker")
+local monitor = peripheral.find("monitor")
 
-if drive == nil or not drive.isDiskPresent() then
-	local savedSongs = fs.list("songs/")
+if not modem then error("A modem is required") end
+if not speaker then error("A speaker is required") end
 
-	if #savedSongs == 0 then
-		error("ERR - No disk was found in the drive, or no drive was found. No sound files were found saved to device.")
-	else
-		local entries = {
-			[1] = {
-				label = "[CANCEL]",
-				callback = function()
-					error()
-				end
-			}
-		}
+-- Utility: play buffer on all speakers
+local function playBuffer(buffer, vol)
+    vol = vol or 1
+    local callbacks = {}
+    for i, sp in pairs({speaker}) do
+        table.insert(callbacks, function()
+            while not sp.playAudio(buffer, vol) do
+                os.pullEvent("speaker_audio_empty")
+            end
+        end)
+    end
+    parallel.waitForAll(table.unpack(callbacks))
+end
 
-		for i, fp in ipairs(savedSongs) do
-			table.insert(entries, {
-				label = fp:match("^([^.]+)"),
-				callback = function()
-					selectedSong = fp
+-- Save a song URL
+local function saveSong(name, url)
+    if not name or not url then
+        print("Usage: musicme save <name> <url>")
+        return
+    end
+    if not fs.exists("songs") then fs.makeDir("songs") end
+    local file = fs.open("songs/" .. name .. ".txt", "w")
+    file.write(url)
+    file.close()
+    print("Saved song '" .. name .. "' successfully!")
+end
 
-					menu.exit()
-				end
-			})
-		end
+-- Load a song URL
+local function loadSong(name)
+    local path = "songs/" .. name .. ".txt"
+    if not fs.exists(path) then
+        error("Song '" .. name .. "' not found")
+    end
+    local file = fs.open(path, "r")
+    local uri = file.readAll()
+    file.close()
+    return uri
+end
 
-		menu.init({
-			main = {
-				entries = entries
-			}
-		})
+-- Play a song from URL
+local function playSong(uri)
+    if not uri:find("^https?://") then error("Invalid URL") end
 
-		menu.thread()
+    local response = http.get(uri, nil, true)
+    if not response then error("Failed to fetch song") end
 
-		if selectedSong ~= nil then
-			local fp = "songs/" .. selectedSong
+    local decoder = dfpwm.make_decoder()
+    local chunkSize = 4 * 1024
+    local chunk = response.read(chunkSize)
 
-			if fs.exists(fp) then
-				local file = fs.open(fp, "r")
+    while chunk do
+        local buffer = decoder(chunk)
+        playBuffer(buffer, volume)
+        chunk = response.read(chunkSize)
+    end
+    print("Finished playing song.")
+end
 
-				uri = file.readAll()
+-- List all saved songs
+local function listSongs()
+    if not fs.exists("songs") then return {} end
+    return fs.list("songs")
+end
 
-				file.close()
-			else
-				print("Song was not found on device!")
+-- Simple CLI
+local args = { ... }
+local command = table.remove(args, 1)
 
-				return
-			end
-		else error() end
-	end
+if command == "save" then
+    local name, url = table.unpack(args)
+    saveSong(name, url)
+
+elseif command == "play" then
+    local name = table.unpack(args)
+    local uri = loadSong(name)
+    playSong(uri)
+
+elseif command == "list" then
+    local songs = listSongs()
+    print("Saved Songs:")
+    for i, song in ipairs(songs) do
+        print("-", song:match("^(.*)%.txt$"))
+    end
+
 else
-	local songFile = fs.open("disk/song.txt", "r")
-	uri = songFile.readAll()
-
-	songFile.close()
+    print([[Usage:
+musicme save <name> <url>  -- Save a song URL to device
+musicme play <name>        -- Play a saved song
+musicme list               -- List saved songs]])
 end
-
-if uri == nil or not uri:find("^https") then
-	print("ERR - Invalid URI!")
-	return
-end
-
-function playChunk(chunk)
-	local returnValue = nil
-	local callbacks = {}
-
-	for i, speaker in pairs(speakers) do
-		if i > 1 then
-			table.insert(callbacks, function()
-				speaker.playAudio(chunk, 0)
-			end)
-		else
-			table.insert(callbacks, function()
-				returnValue = speaker.playAudio(chunk, 0)
-			end)
-		end
-	end
-	for i, speaker in pairs(speakers2) do
-		if i > 1 then
-			table.insert(callbacks, function()
-				speaker.stop()
-				speaker.playAudio(chunk, volume or 1.0)
-			end)
-		else
-			table.insert(callbacks, function()
-				returnValue = speaker.playAudio(chunk, volume or 1.0)
-			end)
-		end
-	end
-
-	parallel.waitForAll(table.unpack(callbacks))
-
-	return returnValue
-end
-
-print("Playing '" .. drive.getDiskLabel() .. "' at volume " .. (volume or 1.0))
-
-local quit = false
-
-function play()
-	while true do
-		local response = http.get(uri, nil, true)
-
-		local chunkSize = 4 * 1024
-		local chunk = response.read(chunkSize)
-		while chunk ~= nil do
-			local buffer = decoder(chunk)
-
-			while not playChunk(buffer) do
-				os.pullEvent("speaker_audio_empty")
-			end
-
-			chunk = response.read(chunkSize)
-		end
-	end
-end
-
-function readUserInput()
-	local commands = {
-		["stop"] = function()
-			quit = true
-		end
-	}
-
-	while true do
-		local input = string.lower(read())
-		local commandName = ""
-		local cmdargs = {}
-
-		local i = 1
-		for word in input:gmatch("%w+") do
-			if i > 1 then
-				table.insert(cmdargs, word)
-			else
-				commandName = word
-			end
-		end
-
-		local command = commands[commandName]
-
-		if command ~= nil then
-			command(table.unpack(cmdargs))
-		else print('"' .. cmdargs[1] .. '" is not a valid command!') end
-	end
-end
-
-function waitForQuit()
-	while not quit do
-		sleep(0.1)
-	end
-end
-
-parallel.waitForAny(play, readUserInput, waitForQuit)
