@@ -27,6 +27,7 @@ local clientChannel = settings.get("clientChannel", controlChannel + 2)
 -- Peripherals
 local modem = peripheral.find("modem")
 local speaker = peripheral.find("speaker")
+local speakers = {peripheral.find("speaker")}
 local monitor = peripheral.find("monitor")
 
 -- Ensure there is a modem and speaker
@@ -87,7 +88,7 @@ function playBuffer(chunk, volume)
 	local returnValue = nil
 	local callbacks = {}
 
-	for i, speak in pairs(speaker) do
+	for i, speak in pairs(speakers) do
 		if i > 1 then
 			table.insert(callbacks, function()
 				speak.playAudio(chunk, volume or 1.0)
