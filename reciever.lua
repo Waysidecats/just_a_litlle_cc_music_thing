@@ -83,7 +83,7 @@ local awaitMessage = function(channel, replyChannel, command)
     error("Invalid function arguments: <" .. tostring(channel) .. ", " .. tostring(replyChannel) .. ", " .. command .. ">")
 end
 
-function playChunk(buffer, volume)
+function playBuffer(buffer, volume)
 	local returnValue = nil
 	local callbacks = {}
 
