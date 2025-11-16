@@ -1,7 +1,11 @@
+local wpp = require("wpp")
 local dfpwm = require("cc.audio.dfpwm")
+wpp.wireless.connect("monolith-radio") 
 local speakers = { peripheral.find("speaker") }
+local speakers2 = { wpp.peripheral.find("speaker") }
 local drive = peripheral.find("drive")
 local decoder = dfpwm.make_decoder()
+
 
 local menu = require "menu"
 
@@ -29,6 +33,7 @@ if drive == nil or not drive.isDiskPresent() then
 				label = fp:match("^([^.]+)"),
 				callback = function()
 					selectedSong = fp
+
 					menu.exit()
 				end
 			})
@@ -47,10 +52,13 @@ if drive == nil or not drive.isDiskPresent() then
 
 			if fs.exists(fp) then
 				local file = fs.open(fp, "r")
+
 				uri = file.readAll()
+
 				file.close()
 			else
 				print("Song was not found on device!")
+
 				return
 			end
 		else error() end
@@ -58,6 +66,7 @@ if drive == nil or not drive.isDiskPresent() then
 else
 	local songFile = fs.open("disk/song.txt", "r")
 	uri = songFile.readAll()
+
 	songFile.close()
 end
 
@@ -66,62 +75,46 @@ if uri == nil or not uri:find("^https") then
 	return
 end
 
--- ===== STAGGERED PLAYBACK SETTINGS =====
-local STAGGER_COUNT = 20
-local staggerDelay = 1 / STAGGER_COUNT -- 20 phases per second
-local speakersPerPhase = math.ceil(#speakers / STAGGER_COUNT)
-local bufferQueue = {} -- triple buffer
-
--- staggered playChunk function
 function playChunk(chunk)
-	-- enqueue for triple buffering
-	table.insert(bufferQueue, chunk)
-	if #bufferQueue > 3 then
-		table.remove(bufferQueue, 1)
-	end
-
-	local oldestChunk = bufferQueue[1]
-	if not oldestChunk then return end
-
+	local returnValue = nil
 	local callbacks = {}
 
-	for phase = 1, STAGGER_COUNT do
-		local startIndex = (phase-1)*speakersPerPhase + 1
-		local endIndex = math.min(phase*speakersPerPhase, #speakers)
-		local phaseSpeakers = {}
-		for i = startIndex, endIndex do
-			table.insert(phaseSpeakers, speakers[i])
+	for i, speaker in pairs(speakers) do
+		if i > 1 then
+			table.insert(callbacks, function()
+				speaker.playAudio(chunk, 0)
+			end)
+		else
+			table.insert(callbacks, function()
+				returnValue = speaker.playAudio(chunk, 0)
+			end)
 		end
-
-		table.insert(callbacks, function()
-			for _, speaker in ipairs(phaseSpeakers) do
-				while not speaker.playAudio(oldestChunk, volume or 1.0) do
-					os.pullEvent("speaker_audio_empty")
-				end
-			end
-		end)
-
-		-- stagger delay between phases
-		table.insert(callbacks, function() sleep(staggerDelay) end)
+	end
+	for i, speaker in pairs(speakers2) do
+		if i > 1 then
+			table.insert(callbacks, function()
+				speaker.stop()
+				speaker.playAudio(chunk, volume or 1.0)
+			end)
+		else
+			table.insert(callbacks, function()
+				returnValue = speaker.playAudio(chunk, volume or 1.0)
+			end)
+		end
 	end
 
 	parallel.waitForAll(table.unpack(callbacks))
-	table.remove(bufferQueue, 1)
-	return true
+
+	return returnValue
 end
 
-print("Playing '" .. (drive and drive.getDiskLabel() or selectedSong) .. "' at volume " .. (volume or 1.0))
+print("Playing '" .. drive.getDiskLabel() .. "' at volume " .. (volume or 1.0))
 
 local quit = false
 
--- modified play function to keep original behavior
 function play()
 	while true do
 		local response = http.get(uri, nil, true)
-		if not response then
-			print("ERR - Failed to fetch URI")
-			return
-		end
 
 		local chunkSize = 4 * 1024
 		local chunk = response.read(chunkSize)
@@ -137,7 +130,6 @@ function play()
 	end
 end
 
--- user input remains unchanged
 function readUserInput()
 	local commands = {
 		["stop"] = function()
