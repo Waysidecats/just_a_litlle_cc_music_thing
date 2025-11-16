@@ -106,47 +106,53 @@ function playBuffer(chunk, volume)
 end
 
 -- Run the speaker client
+-- Run the speaker client
 musicme.client = function(arguments)
     modem.open(bufferChannel)
     modem.open(clientChannel)
 
+    -- Play buffer with proper sync for all speakers
+    local function playBuffer(chunk, volume)
+        local callbacks = {}
+        for i, speak in ipairs(speakers) do
+            table.insert(callbacks, function()
+                while not speak.playAudio(chunk, volume or 1.0) do
+                    os.pullEvent("speaker_audio_empty")
+                end
+            end)
+        end
+        parallel.waitForAll(table.unpack(callbacks))
+    end
+
+    -- Buffer playback loop
     local bufferPlayback = function()
-        local msg
         while true do
-            msg = awaitMessage(bufferChannel, controlChannel, "buffer")
-            if msg.buffer then playBuffer(msg.buffer, 3000) end
+            local msg = awaitMessage(bufferChannel, controlChannel, "buffer")
+            if msg.buffer then
+                playBuffer(msg.buffer, 3000)
+            end
         end
     end
 
+    -- Receive other client messages
     local receiveMessage = function()
-        local msg
         while true do
-            print("Listening for updates")
-            msg = awaitMessage(clientChannel, controlChannel, "any")
-            -- Not sure why the reboots are required. Perhaps a desync issue when running on a server
-            -- Start
+            local msg = awaitMessage(clientChannel, controlChannel, "any")
+            
             if msg.command == "start" then
                 print("Starting playback...")
                 os.sleep(2)
                 shell.run("reboot")
-            end
-            -- Song buffer
-            if msg.command == "buffer" then
+            elseif msg.command == "buffer" then
                 print("Received song buffer... playing")
-            end
-            -- Pause
-            if msg.command == "pause" then
+            elseif msg.command == "pause" then
                 if msg.pause then speaker.stop() end
                 shell.run("reboot")
-            end
-            -- Stop
-            if msg.command == "stop" then
+            elseif msg.command == "stop" then
                 speaker.stop()
                 shell.run("reboot")
-            end
-            -- Volume
-            if msg.command == "volume" then
-                print("Received volume command. Volume = " ..tostring(clientVolume) .. " -> " .. tostring(msg.volume))
+            elseif msg.command == "volume" then
+                print("Received volume command. Volume = " .. tostring(clientVolume) .. " -> " .. tostring(msg.volume))
                 clientVolume = msg.volume
             end
         end
